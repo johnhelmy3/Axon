@@ -1153,7 +1153,7 @@ function showLogCard(type) {
 
   } else if (type === 'exercise') {
     html += '<div class="log-card">' +
-      '<div class="log-card-title">🏋️ Log Exercise</div>' +
+      '<div class="log-card-title">🏋️ Log Activity</div>' +
       '<div class="ex-types" id="ex-type-btns">' +
       ['Weights','Cardio','Walk','Swim','Cycling','HIIT','Yoga'].map(function(t) {
         return '<button class="ex-type-btn' + (t==='Weights'?' on':'') + '" onclick="selExType(\'' + t + '\',this)">' + t + '</button>';
@@ -2032,7 +2032,7 @@ function localReply(msg) {
   if (/water|drink|hydrat/.test(m)) return 'Water today: **' + (d.w || 0) + ' L** of **' + WATER_GOAL + ' L**' + ((d.w || 0) >= WATER_GOAL ? ' ✅' : ' — **' + r1(WATER_GOAL - (d.w || 0)) + ' L** to go.');
   if (/exercis|burn|workout/.test(m)) {
     var wos = (d.wo || []).length, ex = (d.ex || []);
-    if (!ex.length && !wos) return 'No exercise logged today yet. Tap 💪 Workout or 🏋️ Exercise.';
+    if (!ex.length && !wos) return 'No exercise logged today yet. Tap 💪 Workout or 🏋️ Activity.';
     return 'Today: **' + wos + '** workout(s), exercise burned **' + Math.round(sumEx(d)) + ' kcal** (estimate)' + (ex.length ? ': ' + ex.map(function (e) { return e.n + (e.mins ? ' ' + e.mins + 'min' : ''); }).join(', ') : '') + '.';
   }
   if (/calor|kcal|eat/.test(m)) {
@@ -2083,7 +2083,7 @@ function logHTML() {
   h += '<div class="sec"><div class="sec-t">Water · ' + (d.w || 0) + ' / ' + WATER_GOAL + ' L</div><div class="row2">' +
        '<button class="btn sm ghost" onclick="logWater(-0.25)">−250 ml</button><button class="btn sm ghost" onclick="logWater(0.25)">+250 ml</button><button class="btn sm ghost" onclick="logWater(0)">Reset</button></div></div>';
 
-  h += '<div class="sec"><div class="sec-t">Exercise · ' + Math.round(sumEx(d)) + ' kcal (estimate)</div>';
+  h += '<div class="sec"><div class="sec-t">Activity · ' + Math.round(sumEx(d)) + ' kcal (estimate)</div>';
   if (!(d.ex || []).length) h += '<div class="note">Nothing logged yet.</div>';
   (d.ex || []).forEach(function (e, i) {
     if (_edit && _edit.t === 'x' && _edit.i === i) {
