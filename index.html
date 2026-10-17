@@ -709,6 +709,15 @@ body {
 .hbar .v { width:26px; text-align:right; font-family:'JetBrains Mono',monospace; }
 .pk-list .lrow { cursor:pointer; }
 .modal { max-height:90vh; overflow-y:auto; }
+
+.stat { min-width: 58px; padding: 8px 4px; }
+.stat-val { font-size: 13px; }
+.setrow { grid-template-columns: 22px 1fr 66px 62px 34px 30px; gap: 5px; }
+.setrow input { font-size: 13px; padding: 8px 2px; }
+.setrow input::placeholder { font-size: 11px; }
+
+.chip { white-space: normal; text-align: left; max-width: 100%; line-height: 1.35; }
+.chips { max-width: 100%; }
 </style>
 </head>
 <body>
@@ -799,6 +808,8 @@ body {
       <div class="note" style="margin-top:4px">Exercise calorie estimates are rough and often high, so “Half” is the default.</div>
     </div>
 
+    <div id="acct-box"></div>
+
     <div class="fld"><label>Optional AI coach key</label>
       <input type="password" id="api-key" placeholder="Anthropic API key (sk-ant-…)">
       <div class="modal-note">AXON works fully without a key. The AI coach is optional: it uses your own Anthropic key, bills your own account, and the key is stored only in this browser.</div>
@@ -839,6 +850,19 @@ body {
 <div id="toast"></div>
 
 <script>
+// ── FIREBASE (optional accounts) ──
+// To enable "Sign in with Google": paste your Firebase web config object between the braces below,
+// replacing null. Example: var FIREBASE_CONFIG = { apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." };
+// Leave it as null and the app works as before (data stays on the device, no sign-in shown).
+var FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB0_2G5l9MgoJ8EGQXis8rMM-BqOsDXKwE",
+  authDomain: "axon-16d51.firebaseapp.com",
+  projectId: "axon-16d51",
+  storageBucket: "axon-16d51.firebasestorage.app",
+  messagingSenderId: "491901325557",
+  appId: "1:491901325557:web:30190fefbaca5b1c0c75bc"
+};
+
 // ── DATA ──
 // These are set from the user's profile (see applyProfile); defaults are placeholders only.
 var CAL_GOAL = 2000;
@@ -859,7 +883,15 @@ function loadData() {
   try { return JSON.parse(localStorage.getItem('axon_data') || '{}'); } catch(e) { return {}; }
 }
 function saveData(d) {
+  // stamp every day whose content changed (_u = last-modified ms) so cloud sync can tell what is newer
+  var prev = loadData(), now = Date.now(), changed = false;
+  Object.keys(d).forEach(function (k) {
+    if (!d[k] || typeof d[k] !== 'object') return;
+    if (!prev[k] || canon(stripU(prev[k])) !== canon(stripU(d[k]))) { d[k]._u = now; changed = true; }
+    else if (prev[k]._u && !d[k]._u) d[k]._u = prev[k]._u;
+  });
   localStorage.setItem('axon_data', JSON.stringify(d));
+  if (changed) scheduleSync();
 }
 function gd() {
   var d = loadData(), k = tdk();
@@ -1572,6 +1604,7 @@ function tst(msg, err) {
 function openSettings() {
   document.getElementById('api-key').value = getKey();
   syncSettingsUI();
+  renderAccount();
   document.getElementById('settings-modal').classList.add('open');
 }
 function closeSettings() {
@@ -1644,7 +1677,13 @@ var LB = 2.20462;
 var P = null, T = null;   // active profile, computed targets
 
 function getProfile() { try { return JSON.parse(localStorage.getItem('axon_profile') || 'null'); } catch (e) { return null; } }
-function saveProfile(p) { localStorage.setItem('axon_profile', JSON.stringify(p)); }
+function saveProfile(p) {
+  var old = getProfile();
+  var same = old && canon(stripU(old, ['theme', 'restSec'])) === canon(stripU(p, ['theme', 'restSec']));
+  p._u = same ? (old._u || 0) : Date.now();
+  localStorage.setItem('axon_profile', JSON.stringify(p));
+  if (!same) scheduleSync();
+}
 
 // unit helpers (data is always stored in kg / cm / L)
 function isImp() { return !!(P && P.units === 'imperial'); }
@@ -1757,7 +1796,7 @@ function renderOnboard() {
   var h = '<div class="page-hdr">' + (_obFirst ? '' : '<button class="page-back" onclick="closeOnboard()">←</button>') +
           '<div class="page-title">' + (_obFirst ? 'Welcome to AXON' : 'Profile &amp; targets') + '</div></div>' +
           '<div class="page-body">';
-  if (_obFirst) h += '<div class="note" style="margin-bottom:12px">A few details so AXON can set sensible daily targets for you. Everything stays on this device.</div>';
+  if (_obFirst) h += '<div class="note" style="margin-bottom:12px">A few details so AXON can set sensible daily targets for you. Without an account, everything stays on this device.</div><div id="ob-acct"></div>';
 
   h += '<div class="sec"><div class="sec-t">About you</div>' +
        '<div class="fld"><label>Name (optional)</label><input class="inp" id="ob-name" value="' + esc(o.name || '') + '" maxlength="30"></div>' +
@@ -1790,6 +1829,7 @@ function renderOnboard() {
        '<button class="btn" onclick="obSave()">' + (_obFirst ? 'Start tracking' : 'Save &amp; recalculate') + '</button></div>';
   $('onboard').innerHTML = h;
   obPreview();
+  renderAccount();
 }
 
 function obSet(key, val) { obCollect(); _ob[key] = val; renderOnboard(); }
@@ -1879,9 +1919,9 @@ function syncSettingsUI() {
 function setTheme(t) { P.theme = t; saveProfile(P); applyProfile(); syncSettingsUI(); }
 function setEat(v) { P.eatback = v; saveProfile(P); applyProfile(); syncSettingsUI(); updateStats(); }
 function deleteAllData() {
-  if (!confirm('Delete ALL AXON data on this device (profile, logs, workouts, API key)? This cannot be undone. Export first if unsure.')) return;
-  Object.keys(localStorage).forEach(function (k) { if (k.indexOf('axon_') === 0) localStorage.removeItem(k); });
-  location.reload();
+  if (!confirm('Delete ALL AXON data on this device (profile, logs, workouts, API key)? This cannot be undone. Export first if unsure. A copy saved in your account (if you signed in) is NOT deleted.')) return;
+  wipeLocal();
+  reloadApp();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2403,6 +2443,7 @@ function pkCreate() {
   var ex = { id: 'c-' + slug(n) + '-' + Date.now().toString(36), n: n, m: $('pk-cm').value, eq: 'Custom' };
   var c = getCustomEx(); c.push(ex);
   localStorage.setItem('axon_customex', JSON.stringify(c));
+  scheduleSync();
   pkPick(ex.id);
 }
 
@@ -2437,8 +2478,8 @@ function workoutHTML() {
 
   var doneSets = 0; WO.items.forEach(function (it) { it.sets.forEach(function (s) { if (s.done) doneSets++; }); });
   h += '<div class="sec"><input class="inp" value="' + esc(WO.name) + '" onchange="woRename(this.value)" maxlength="40">' +
-       '<div class="row2" style="margin-top:8px"><div class="note">⏱ <b id="wo-elapsed">00:00</b> · ' + doneSets + ' sets done</div>' +
-       '<div class="note" style="text-align:right">Rest ' + [60, 90, 120, 180].map(function (s) { return '<button class="pill-sm' + ((P.restSec || 90) === s ? ' on' : '') + '" onclick="setRest(' + s + ')">' + s + 's</button>'; }).join(' ') + '</div></div></div>';
+       '<div class="note" style="margin-top:8px">⏱ <b id="wo-elapsed">00:00</b> · ' + doneSets + ' sets done</div>' +
+       '<div class="note" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">Rest timer ' + [60, 90, 120, 180].map(function (s) { return '<button class="pill-sm' + ((P.restSec || 90) === s ? ' on' : '') + '" onclick="setRest(' + s + ')">' + s + 's</button>'; }).join('') + '</div></div>';
 
   WO.items.forEach(function (it, i) {
     var lp = lastPerf(it.id, WO.id);
@@ -2463,6 +2504,337 @@ function workoutHTML() {
   return h;
 }
 
+// ═══════════════════════════════════════════════════════════
+// v4 · OPTIONAL CLOUD ACCOUNT (Google sign-in + sync via Firebase)
+// Sign-in is optional. Without it, data stays on this device only.
+// ═══════════════════════════════════════════════════════════
+var FB = null;                                   // cloud adapter, set by initCloud()
+var ACC = { user: null, state: 'off', last: 0, err: '' };   // state: off | loading | signedout | signedin | syncing | unavailable
+var _syncTimer = null, _syncing = false, _syncAgain = false;
+var SYNC_NOTE = 'Optional — but you need an account to save your progress. Without one, your data stays only on this device and can be lost if you clear your browser data or change phone.';
+
+function cloudEnabled() { return !!(FIREBASE_CONFIG || window.__axonAdapter); }
+function reloadApp() { location.reload(); }
+
+// ── metadata kept per device ──
+function loadMeta() { try { return JSON.parse(localStorage.getItem('axon_sync') || 'null') || {}; } catch (e) { return {}; } }
+function saveMeta(m) { try { localStorage.setItem('axon_sync', JSON.stringify(m)); } catch (e) {} }
+function wipeLocal() {
+  Object.keys(localStorage).filter(function (k) { return k.indexOf('axon_') === 0; }).forEach(function (k) { localStorage.removeItem(k); });
+}
+
+// ── change detection helpers ──
+function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}';
+  return JSON.stringify(v);
+}
+function stripU(o, extra) {
+  if (!o || typeof o !== 'object') return o;
+  var c = {};
+  Object.keys(o).forEach(function (k) { if (k !== '_u' && !(extra && extra.indexOf(k) >= 0)) c[k] = o[k]; });
+  return c;
+}
+
+// ── merging two versions of the same day (only for true conflicts) ──
+function uniqBy(arr, fields) {
+  var seen = {}, out = [];
+  arr.forEach(function (e) {
+    var k = fields.map(function (f) { return e[f]; }).join('|');
+    if (!seen[k]) { seen[k] = 1; out.push(e); }
+  });
+  return out;
+}
+function mergeDay(a, b) {
+  var m = JSON.parse(JSON.stringify(a));
+  m.c = uniqBy((a.c || []).concat(b.c || []), ['l', 'a', 't', 'p', 'c', 'f']);
+  m.ex = uniqBy((a.ex || []).concat(b.ex || []), ['n', 'kcal', 't', 'mins', 'wo']);
+  var wo = uniqBy((a.wo || []).concat(b.wo || []), ['id']);
+  if (wo.length) m.wo = wo;
+  m.w = Math.max(a.w || 0, b.w || 0);
+  m.wt = a.wt || b.wt || null;
+  if (!m.scan && b.scan) m.scan = b.scan;
+  return m;
+}
+function dayPayload(day) { return { j: JSON.stringify(day), u: day._u || 0 }; }
+function dayFromPayload(p) { try { var d = JSON.parse(p.j); d._u = p.u; return d; } catch (e) { return null; } }
+
+function profileForCloud(p) { var c = stripU(p, ['theme', 'restSec']); return JSON.stringify(c); }
+function adoptProfile(cp, cu) {
+  var lp = getProfile();
+  cp.theme = (lp && lp.theme) || cp.theme || 'dark';       // theme and rest timer stay per-device
+  cp.restSec = (lp && lp.restSec) || cp.restSec || 90;
+  cp._u = cu;
+  localStorage.setItem('axon_profile', JSON.stringify(cp));
+}
+function pendingCount() {
+  var meta = loadMeta(), D = loadData(), n = 0, pushed = meta.pushed || {};
+  Object.keys(D).forEach(function (k) { if (D[k] && typeof D[k] === 'object' && (D[k]._u || 0) !== (pushed[k] || 0)) n++; });
+  var p = getProfile();
+  if (p && (p._u || 0) !== (meta.profPushed || 0)) n++;
+  return n;
+}
+
+// ── scheduling ──
+function scheduleSync(delay) {
+  if (!FB || !ACC.user) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(function () { syncNow(); }, delay == null ? 3000 : delay);
+}
+function withTimeout(p, ms) {
+  return new Promise(function (res, rej) {
+    var t = setTimeout(function () { rej(new Error('timed out')); }, ms);
+    p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+  });
+}
+
+async function syncNow(manual) {
+  if (!FB || !ACC.user) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { ACC.err = 'Offline — will sync when you are back online'; renderAccount(); return; }
+  if (_syncing) { _syncAgain = true; return; }
+  _syncing = true; ACC.state = 'syncing'; ACC.err = ''; renderAccount();
+  try {
+    await withTimeout(doSync(), 45000);
+    ACC.last = Date.now();
+    if (manual) tst('✓ Synced');
+  } catch (e) {
+    ACC.err = 'Sync failed: ' + ((e && (e.code || e.message)) || e);
+    if (manual) tst('Sync failed', true);
+  } finally {
+    _syncing = false; ACC.state = ACC.user ? 'signedin' : 'signedout'; renderAccount();
+    if (_syncAgain) { _syncAgain = false; scheduleSync(1500); }
+  }
+}
+
+async function doSync() {
+  var uid = ACC.user.uid, meta = loadMeta(), dataChanged = false, profileAdopted = false;
+  if (meta.uid !== uid) meta = { uid: uid, pushed: {}, since: 0, first: true, profPushed: 0 };
+  if (!meta.pushed) meta.pushed = {};
+
+  // first link: older, unstamped local days count as "changed" so they get merged/uploaded
+  if (meta.first) {
+    var D0 = loadData(), touched = false;
+    Object.keys(D0).forEach(function (k) { if (D0[k] && typeof D0[k] === 'object' && !D0[k]._u) { D0[k]._u = 1; touched = true; } });
+    if (touched) localStorage.setItem('axon_data', JSON.stringify(D0));
+  }
+
+  // ── profile + custom exercises ──
+  var cloud = await FB.getUserDoc(uid), lp = getProfile(), pushProfile = false, forceBump = false;
+  var cloudPu = (cloud && cloud.pu) || 0;
+  if (cloud && cloud.pj) {
+    var cp = null; try { cp = JSON.parse(cloud.pj); } catch (e) {}
+    if (cp) {
+      if (!lp) { adoptProfile(cp, cloudPu); profileAdopted = true; }
+      else if (meta.first && canon(stripU(cp, ['theme', 'restSec'])) !== canon(stripU(lp, ['theme', 'restSec']))) {
+        if (confirm('A saved profile was found in your account.\n\nOK = use the saved profile (replaces the one on this device)\nCancel = keep this device\'s profile and overwrite the saved one')) {
+          adoptProfile(cp, cloudPu); profileAdopted = true;
+        } else { pushProfile = true; forceBump = true; }
+      }
+      else if (cloudPu > (lp._u || 0)) { adoptProfile(cp, cloudPu); profileAdopted = true; }
+      else if ((lp._u || 0) > cloudPu) pushProfile = true;
+    }
+  } else if (lp) { pushProfile = true; }
+
+  var cloudCx = []; try { cloudCx = cloud && cloud.cx ? JSON.parse(cloud.cx) : []; } catch (e) {}
+  var localCx = getCustomEx(), ids = {}, mergedCx = [];
+  localCx.concat(cloudCx).forEach(function (x) { if (x && x.id && !ids[x.id]) { ids[x.id] = 1; mergedCx.push(x); } });
+  if (mergedCx.length !== localCx.length) localStorage.setItem('axon_customex', JSON.stringify(mergedCx));
+  var pushCx = mergedCx.length !== cloudCx.length;
+
+  // ── days ──
+  var remote = await FB.getDays(uid, Math.max((meta.since || 0) - 86400000, 0));
+  var D = loadData(), force = {}, maxU = meta.since || 0;
+  Object.keys(remote).forEach(function (k) {
+    var R = dayFromPayload(remote[k]); if (!R) return;
+    if (R._u > maxU) maxU = R._u;
+    var L = D[k], ru = R._u, base = meta.pushed[k] || 0;
+    if (!L) { D[k] = R; meta.pushed[k] = ru; dataChanged = true; return; }
+    var lu = L._u || 0;
+    if (ru === lu) { meta.pushed[k] = ru; return; }
+    var localDirty = lu !== base, remoteNew = ru !== base;
+    if (localDirty && remoteNew) {                           // edited on both devices: combine
+      var M = mergeDay(L, R); M._u = Math.max(lu, ru) + 1; D[k] = M; force[k] = true; dataChanged = true;
+    } else if (remoteNew) { D[k] = R; meta.pushed[k] = ru; dataChanged = true; }
+  });
+  if (dataChanged) localStorage.setItem('axon_data', JSON.stringify(D));   // raw write: must not re-stamp
+
+  // ── push profile / custom exercises ──
+  if (pushProfile || pushCx) {
+    var obj = {}, cur = getProfile();
+    if (pushProfile && cur) {
+      var pu = Math.max(cur._u || 0, cloudPu);
+      if (forceBump || pu <= cloudPu && cloud && cloud.pj) pu = cloudPu + 1;
+      if (pu !== cur._u) { cur._u = pu; localStorage.setItem('axon_profile', JSON.stringify(cur)); }
+      obj.pj = profileForCloud(cur); obj.pu = pu;
+    }
+    if (pushCx) obj.cx = JSON.stringify(mergedCx);
+    await FB.setUserDoc(uid, obj);
+  }
+  var pNow = getProfile();
+  if (pNow) meta.profPushed = pNow._u || 0;
+
+  // ── push changed days ──
+  var pushKeys = Object.keys(D).filter(function (k) {
+    return D[k] && typeof D[k] === 'object' && (force[k] || (D[k]._u || 0) !== (meta.pushed[k] || 0));
+  });
+  for (var s = 0; s < pushKeys.length; s += 10) {
+    await Promise.all(pushKeys.slice(s, s + 10).map(function (k) {
+      var snap = JSON.parse(JSON.stringify(D[k]));
+      return FB.setDay(uid, k, dayPayload(snap)).then(function () {
+        meta.pushed[k] = snap._u || 0;
+        if ((snap._u || 0) > maxU) maxU = snap._u;
+      });
+    }));
+  }
+  meta.since = maxU; meta.first = false;
+  saveMeta(meta);
+  afterRemoteChange(profileAdopted, dataChanged);
+}
+
+function afterRemoteChange(profileAdopted, dataChanged) {
+  if (getProfile() && (profileAdopted || !P)) applyProfile();
+  if (P && T) updateStats();
+  if (_obFirst && getProfile()) {                         // first run: account already had a profile
+    $('onboard').classList.remove('open'); _obFirst = false;
+    if (!$('chat').children.length) welcome();
+  }
+  if (dataChanged && _pageKind && _pageKind !== 'workout') renderPage();
+}
+
+// ── sign-in / out / delete ──
+function onUser(u) {
+  ACC.user = u;
+  if (!u) { ACC.state = 'signedout'; renderAccount(); return; }
+  var meta = loadMeta();
+  if (meta.uid && meta.uid !== u.uid) {
+    if (!confirm('This device still holds AXON data from a different account.\nIt will be removed from this device before you sign in as ' + (u.email || 'this account') + '.\n\nContinue?')) {
+      ACC.user = null; try { FB.signOut(); } catch (e) {} renderAccount(); return;
+    }
+    wipeLocal(); reloadApp(); return;
+  }
+  ACC.state = 'signedin'; renderAccount();
+  syncNow();
+}
+async function accSignIn() {
+  if (!FB) { tst('Sign-in is not ready — check your connection', true); initCloud(); return; }
+  try { ACC.err = ''; await FB.signIn(); }
+  catch (e) { tst('Sign-in failed: ' + ((e && (e.code || e.message)) || e), true); }
+}
+async function accSignOut() {
+  if (!ACC.user || !FB) return;
+  if (!confirm('Sign out of your AXON account on this device?')) return;
+  try { await withTimeout(syncNow(), 15000); } catch (e) {}                 // best-effort final sync
+  var remove = confirm('Also remove your AXON data from this device?\n\nOK = remove it (it stays saved in your account) — best on shared devices\nCancel = keep a copy on this device');
+  if (remove && pendingCount() > 0 && !confirm('Some recent changes could not be saved to your account yet and would be lost. Remove anyway?')) remove = false;
+  try { await FB.signOut(); } catch (e) {}
+  ACC.user = null; ACC.state = 'signedout';
+  if (remove) { wipeLocal(); reloadApp(); return; }
+  renderAccount();
+}
+async function accDelete() {
+  if (!ACC.user || !FB) return;
+  if (!confirm('Delete your AXON account and ALL data saved in the cloud?\n\nData on this device stays. This cannot be undone.')) return;
+  try { await FB.deleteAll(ACC.user.uid); await FB.deleteAccount(); }
+  catch (e) { tst('Delete failed: ' + ((e && (e.code || e.message)) || e), true); return; }
+  ACC.user = null; ACC.state = 'signedout';
+  localStorage.removeItem('axon_sync');
+  renderAccount(); tst('Account and cloud data deleted');
+}
+
+// ── account UI (settings + first-run screen) ──
+function syncLine() {
+  if (ACC.state === 'syncing') return 'Syncing…';
+  if (ACC.err) return '<span style="color:var(--red)">' + esc(ACC.err) + '</span>';
+  var n = pendingCount();
+  return (ACC.last ? 'Last synced ' + new Date(ACC.last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Not synced yet') + (n ? ' · ' + n + ' change(s) waiting' : '');
+}
+function accountHTML(compact) {
+  if (!cloudEnabled()) return '';
+  var h = '<div class="' + (compact ? 'sec' : 'fld') + '"><' + (compact ? 'div class="sec-t"' : 'label') + '>Account (optional)</' + (compact ? 'div' : 'label') + '>';
+  if (!ACC.user) {
+    if (ACC.state === 'unavailable') h += '<div class="warn-box">Sign-in could not load (you may be offline).</div>';
+    h += '<button class="btn ghost" onclick="accSignIn()">Sign in with Google</button><div class="note" style="margin-top:6px">' + SYNC_NOTE + '</div>';
+  } else {
+    h += '<div class="note">Signed in as <b>' + esc(ACC.user.email || ACC.user.name || 'your account') + '</b><br>' + syncLine() + '</div>';
+    if (!compact) {
+      h += '<div class="row2" style="margin-top:8px"><button class="btn sm ghost" onclick="syncNow(true)">⟳ Sync now</button><button class="btn sm ghost" onclick="accSignOut()">Sign out</button></div>' +
+           '<button class="btn sm danger" style="margin-top:8px" onclick="accDelete()">Delete account &amp; cloud data</button>';
+    }
+  }
+  return h + '</div>';
+}
+function renderAccount() {
+  var s = $('acct-box'), o = $('ob-acct');
+  if (s) s.innerHTML = accountHTML(false);
+  if (o) o.innerHTML = accountHTML(true);
+}
+
+// ── Firebase adapter (loads the SDK on demand so the app still works offline) ──
+async function makeFirebaseAdapter(cfg) {
+  var B = 'https://www.gstatic.com/firebasejs/10.14.1/';
+  var A = await import(B + 'firebase-app.js');
+  var AU = await import(B + 'firebase-auth.js');
+  var FS = await import(B + 'firebase-firestore.js');
+  var app = A.initializeApp(cfg), auth = AU.getAuth(app), db = FS.getFirestore(app);
+  var provider = new AU.GoogleAuthProvider();
+  var wrap = function (u) { return u ? { uid: u.uid, email: u.email, name: u.displayName } : null; };
+  AU.getRedirectResult(auth).catch(function () {});
+  return {
+    onAuth: function (cb) { return AU.onAuthStateChanged(auth, function (u) { cb(wrap(u)); }); },
+    signIn: async function () {
+      try { await AU.signInWithPopup(auth, provider); }
+      catch (e) {
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment') { await AU.signInWithRedirect(auth, provider); return; }
+        if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+        throw e;
+      }
+    },
+    signOut: function () { return AU.signOut(auth); },
+    getUserDoc: async function (uid) { var s = await FS.getDoc(FS.doc(db, 'users', uid)); return s.exists() ? s.data() : null; },
+    setUserDoc: function (uid, o) { return FS.setDoc(FS.doc(db, 'users', uid), o, { merge: true }); },
+    getDays: async function (uid, since) {
+      var q = FS.query(FS.collection(db, 'users', uid, 'days'), FS.where('u', '>', since));
+      var s = await FS.getDocs(q), out = {};
+      s.forEach(function (d) { out[d.id] = d.data(); });
+      return out;
+    },
+    setDay: function (uid, k, o) { return FS.setDoc(FS.doc(db, 'users', uid, 'days', k), o); },
+    deleteAll: async function (uid) {
+      var s = await FS.getDocs(FS.collection(db, 'users', uid, 'days')), docs = [];
+      s.forEach(function (d) { docs.push(d.ref); });
+      for (var i = 0; i < docs.length; i += 400) {
+        var b = FS.writeBatch(db);
+        docs.slice(i, i + 400).forEach(function (r) { b.delete(r); });
+        await b.commit();
+      }
+      await FS.deleteDoc(FS.doc(db, 'users', uid));
+    },
+    deleteAccount: async function () {
+      try { await AU.deleteUser(auth.currentUser); }
+      catch (e) {
+        if (e.code === 'auth/requires-recent-login') { await AU.reauthenticateWithPopup(auth.currentUser, provider); await AU.deleteUser(auth.currentUser); }
+        else throw e;
+      }
+    }
+  };
+}
+
+async function initCloud() {
+  if (!cloudEnabled() || FB || ACC.state === 'loading') return;
+  ACC.state = 'loading'; renderAccount();
+  try {
+    FB = window.__axonAdapter || await makeFirebaseAdapter(FIREBASE_CONFIG);
+    ACC.state = 'signedout';
+    FB.onAuth(onUser);
+  } catch (e) { FB = null; ACC.state = 'unavailable'; }
+  renderAccount();
+}
+window.addEventListener('online', function () { if (cloudEnabled() && !FB) initCloud(); else scheduleSync(1000); });
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden && FB && ACC.user && Date.now() - ACC.last > 60000) scheduleSync(500);
+});
+
+
 // ── WELCOME ──
 function welcome() {
   var d = gd();
@@ -2486,6 +2858,7 @@ function welcome() {
 
 // ── INIT ──
 if (applyProfile()) { updateStats(); welcome(); } else { openOnboard(true); }
+if (cloudEnabled()) initCloud();
 
 // ── SERVICE WORKER (offline + install) ──
 if ('serviceWorker' in navigator) {
