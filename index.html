@@ -1354,8 +1354,12 @@ async function runScan() {
     });
     var data = await resp.json();
     if (data.error) throw new Error(data.error.message);
-    var raw = data.content[0].text.trim().replace(/```json|```/g,'').trim();
-    _scanResult = JSON.parse(raw);
+    var blocks = Array.isArray(data.content) ? data.content : [];
+    var txt = blocks.filter(function(b){ return b && b.type === 'text' && typeof b.text === 'string'; }).map(function(b){ return b.text; }).join('\n');
+    if (!txt.trim()) throw new Error('The AI returned no text' + (data.stop_reason ? ' (stop reason: ' + data.stop_reason + ')' : '') + '. Try a clearer, smaller screenshot or try again.');
+    var m = txt.replace(/```json|```/g,'').match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('Could not find scan values in the AI reply. Try a clearer screenshot.');
+    _scanResult = JSON.parse(m[0]);
     showScanResults(_scanResult);
   } catch(e) {
     err.textContent = '❌ ' + e.message;
