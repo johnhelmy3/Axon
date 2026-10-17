@@ -1583,6 +1583,7 @@ function buildSystem() {
     '- Flag concerns: low water, streak risk, plateau, low protein, very fast weight change.\n' +
     '- Use **bold** for key numbers and recommendations.\n' +
     '- Keep responses under 200 words unless a full plan is requested.\n' +
+    'EDITING: you cannot edit or delete logged entries. If the user logged something wrong, tell them to tap the 📝 Today button: it lists today\'s food, water, weight, activity and workouts with ✎ edit and 🗑 delete (water has a "Set total" box).\n' +
     'FOOD LOGGING:\n' +
     '- When the user says what they ate or drank (e.g. "breakfast: 3 eggs omelette and a latte"), call the log_food tool with one item per distinct food or drink. The user reviews and confirms before anything is saved, so do not claim it is already saved.\n' +
     '- If the user gives nutrition numbers (e.g. "per slice: 100 kcal, 4.6 g protein"), use them exactly and multiply by the quantity eaten; set source to "user". Only estimate numbers the user did not give, using typical values, and set source to "estimate".\n' +
@@ -2085,7 +2086,8 @@ function logHTML() {
   h += '</div>';
 
   h += '<div class="sec"><div class="sec-t">Water · ' + (d.w || 0) + ' / ' + WATER_GOAL + ' L</div><div class="row2">' +
-       '<button class="btn sm ghost" onclick="logWater(-0.25)">−250 ml</button><button class="btn sm ghost" onclick="logWater(0.25)">+250 ml</button><button class="btn sm ghost" onclick="logWater(0)">Reset</button></div></div>';
+       '<button class="btn sm ghost" onclick="logWater(-0.25)">−250 ml</button><button class="btn sm ghost" onclick="logWater(0.25)">+250 ml</button><button class="btn sm ghost" onclick="logWater(0)">Reset</button></div>' +
+       '<div class="row2" style="margin-top:8px"><input class="inp" id="lg-w" type="number" step="0.05" min="0" inputmode="decimal" placeholder="Set total (L)" value="' + (d.w || '') + '"><button class="btn sm" onclick="logSetWater()">Save</button></div></div>';
 
   h += '<div class="sec"><div class="sec-t">Activity · ' + Math.round(sumEx(d)) + ' kcal (estimate)</div>';
   if (!(d.ex || []).length) h += '<div class="note">Nothing logged yet.</div>';
@@ -2139,6 +2141,12 @@ function logDel(t, i) {
   var d = gd();
   if (t === 'c') d.c.splice(i, 1); else d.ex.splice(i, 1);
   sd(d); _edit = null; tst('Deleted'); renderPage();
+}
+function logSetWater() {
+  var v = num($('lg-w').value), d = gd();
+  if (v == null || v < 0) { tst('Enter litres, e.g. 1.5', true); return; }
+  if (v > 10) { tst('That looks too high — max 10 L', true); return; }
+  d.w = Math.round(v * 100) / 100; sd(d); tst('💧 Saved'); renderPage();
 }
 function logWater(delta) {
   var d = gd();
