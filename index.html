@@ -718,6 +718,17 @@ body {
 
 .chip { white-space: normal; text-align: left; max-width: 100%; line-height: 1.35; }
 .chips { max-width: 100%; }
+
+/* v5 food review card */
+.fc-item { padding: 8px 0; border-bottom: 1px solid var(--border2); }
+.fc-item:last-child { border-bottom: none; }
+.fc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.fc-grid label { font-size: 9px; color: var(--mu2); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: .6px; min-width: 0; }
+.fc-grid .log-input { margin-top: 2px; padding: 7px 4px; text-align: center; width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+.fc-src { font-size: 10px; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+.fc-src.user { color: var(--green); }
+.fc-src.estimate { color: var(--amber); }
+.fc-total { font-size: 12px; padding-top: 8px; border-top: 1px solid var(--border2); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -1495,15 +1506,15 @@ async function sendMessage() {
         model: 'claude-sonnet-5',
         max_tokens: 1000,
         system: systemPrompt,
+        tools: [LOG_FOOD_TOOL],
         messages: messages
       })
     });
 
     var data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    var reply = data.content.filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
     removeTyping();
-    addMsg('agent', reply, 'AXON · ' + now());
+    handleModelBlocks(data.content || [], 'AXON · ' + now());
 
   } catch(err) {
     removeTyping();
@@ -1568,6 +1579,11 @@ function buildSystem() {
     '- Flag concerns: low water, streak risk, plateau, low protein, very fast weight change.\n' +
     '- Use **bold** for key numbers and recommendations.\n' +
     '- Keep responses under 200 words unless a full plan is requested.\n' +
+    'FOOD LOGGING:\n' +
+    '- When the user says what they ate or drank (e.g. "breakfast: 3 eggs omelette and a latte"), call the log_food tool with one item per distinct food or drink. The user reviews and confirms before anything is saved, so do not claim it is already saved.\n' +
+    '- If the user gives nutrition numbers (e.g. "per slice: 100 kcal, 4.6 g protein"), use them exactly and multiply by the quantity eaten; set source to "user". Only estimate numbers the user did not give, using typical values, and set source to "estimate".\n' +
+    '- For unclear portions or cooking methods, make a reasonable assumption and state it in the assumptions field instead of asking questions.\n' +
+    '- Do NOT call log_food for questions, plans, or meal ideas, or when the user says they already logged something (e.g. "I just logged ..."). Everything is logged for today.\n' +
     'SAFETY RULES (always follow):\n' +
     '- You are not a doctor. Do not diagnose or give medical advice.\n' +
     '- Never recommend eating below ' + T.floor + ' kcal/day or losing weight faster than about 1% of body weight per week.\n' +
@@ -1670,7 +1686,7 @@ function num(v) { var n = parseFloat(v); return isNaN(n) ? null : n; }
 function r1(x) { return Math.round(x * 10) / 10; }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function mmss(s) { return Math.floor(s / 60) + ':' + pad2(s % 60); }
-function esc(s) { return escHtml(String(s == null ? '' : s)); }
+function esc(s) { return escHtml(String(s == null ? '' : s)).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }   // safe in text AND quoted attributes
 function jsv(v) { return typeof v === 'number' ? v : "'" + v + "'"; }
 
 var LB = 2.20462;
@@ -1956,6 +1972,9 @@ function localReply(msg) {
   var m = msg.toLowerCase(), d = gd(), D = loadData();
   var tk = Math.round(sumCal(d)), bud = Math.round(budgetOf(d)), left = bud - tk;
   var ser = weightSeries(), rate = weeklyRate(ser), lw = latestWeight();
+
+  if (/^\s*(breakfast|lunch|dinner|supper|snack|brunch|i\s+(just\s+)?(ate|had|drank)|just\s+(ate|had))\b/i.test(msg))
+    return 'Logging a meal from text needs the optional AI coach, because it estimates calories and macros for you. Add your own Anthropic key in ⚙ Settings, or log it now with 🍽️ Food.';
 
   if (/meal plan|what should i eat|suggest a workout|workout for today|full meal/.test(m))
     return 'Meal plans and workout suggestions need the optional AI coach. Add your own Anthropic key in ⚙ Settings to turn it on. Meanwhile, 💪 Workout has starter templates and 📈 Progress shows your trend.';
@@ -2588,6 +2607,17 @@ function withTimeout(p, ms) {
   });
 }
 
+var STEP_TIMEOUT = 20000;   // each cloud call gets this long before we report where it got stuck
+function stepErr(step, e) {
+  var code = (e && (e.code || e.message)) || String(e), hint = '';
+  if (/permission-denied|PERMISSION_DENIED/i.test(code)) hint = 'Firestore security rules are blocking access. Publish the rules in Firestore → Rules.';
+  else if (/timed out|unavailable|offline|not-found|NOT_FOUND/i.test(code)) hint = 'Cannot reach Firestore. Check that the database is created (Firestore Database → Create database) and that your network or ad-blocker allows firestore.googleapis.com.';
+  var err = new Error(step + ': ' + code + (hint ? ' — ' + hint : ''));
+  err.code = code;
+  return err;
+}
+function fbStep(step, p) { return withTimeout(Promise.resolve(p), STEP_TIMEOUT).catch(function (e) { throw stepErr(step, e); }); }
+
 async function syncNow(manual) {
   if (!FB || !ACC.user) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) { ACC.err = 'Offline — will sync when you are back online'; renderAccount(); return; }
@@ -2598,7 +2628,7 @@ async function syncNow(manual) {
     ACC.last = Date.now();
     if (manual) tst('✓ Synced');
   } catch (e) {
-    ACC.err = 'Sync failed: ' + ((e && (e.code || e.message)) || e);
+    ACC.err = 'Sync failed — ' + ((e && e.message) || e);
     if (manual) tst('Sync failed', true);
   } finally {
     _syncing = false; ACC.state = ACC.user ? 'signedin' : 'signedout'; renderAccount();
@@ -2619,7 +2649,7 @@ async function doSync() {
   }
 
   // ── profile + custom exercises ──
-  var cloud = await FB.getUserDoc(uid), lp = getProfile(), pushProfile = false, forceBump = false;
+  var cloud = await fbStep('reading profile', FB.getUserDoc(uid)), lp = getProfile(), pushProfile = false, forceBump = false;
   var cloudPu = (cloud && cloud.pu) || 0;
   if (cloud && cloud.pj) {
     var cp = null; try { cp = JSON.parse(cloud.pj); } catch (e) {}
@@ -2642,7 +2672,7 @@ async function doSync() {
   var pushCx = mergedCx.length !== cloudCx.length;
 
   // ── days ──
-  var remote = await FB.getDays(uid, Math.max((meta.since || 0) - 86400000, 0));
+  var remote = await fbStep('reading daily logs', FB.getDays(uid, Math.max((meta.since || 0) - 86400000, 0)));
   var D = loadData(), force = {}, maxU = meta.since || 0;
   Object.keys(remote).forEach(function (k) {
     var R = dayFromPayload(remote[k]); if (!R) return;
@@ -2668,7 +2698,7 @@ async function doSync() {
       obj.pj = profileForCloud(cur); obj.pu = pu;
     }
     if (pushCx) obj.cx = JSON.stringify(mergedCx);
-    await FB.setUserDoc(uid, obj);
+    await fbStep('saving profile', FB.setUserDoc(uid, obj));
   }
   var pNow = getProfile();
   if (pNow) meta.profPushed = pNow._u || 0;
@@ -2680,7 +2710,7 @@ async function doSync() {
   for (var s = 0; s < pushKeys.length; s += 10) {
     await Promise.all(pushKeys.slice(s, s + 10).map(function (k) {
       var snap = JSON.parse(JSON.stringify(D[k]));
-      return FB.setDay(uid, k, dayPayload(snap)).then(function () {
+      return fbStep('saving ' + k, FB.setDay(uid, k, dayPayload(snap))).then(function () {
         meta.pushed[k] = snap._u || 0;
         if ((snap._u || 0) > maxU) maxU = snap._u;
       });
@@ -2744,7 +2774,7 @@ async function accDelete() {
 // ── account UI (settings + first-run screen) ──
 function syncLine() {
   if (ACC.state === 'syncing') return 'Syncing…';
-  if (ACC.err) return '<span style="color:var(--red)">' + esc(ACC.err) + '</span>';
+  if (ACC.err) return '<span style="color:var(--red);word-break:break-word">' + esc(ACC.err) + '</span>';
   var n = pendingCount();
   return (ACC.last ? 'Last synced ' + new Date(ACC.last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Not synced yet') + (n ? ' · ' + n + ' change(s) waiting' : '');
 }
@@ -2775,7 +2805,7 @@ async function makeFirebaseAdapter(cfg) {
   var A = await import(B + 'firebase-app.js');
   var AU = await import(B + 'firebase-auth.js');
   var FS = await import(B + 'firebase-firestore.js');
-  var app = A.initializeApp(cfg), auth = AU.getAuth(app), db = FS.getFirestore(app);
+  var app = A.initializeApp(cfg), auth = AU.getAuth(app), db = FS.initializeFirestore(app, { experimentalAutoDetectLongPolling: true });   // works on networks/ad-blockers that break streaming
   var provider = new AU.GoogleAuthProvider();
   var wrap = function (u) { return u ? { uid: u.uid, email: u.email, name: u.displayName } : null; };
   AU.getRedirectResult(auth).catch(function () {});
@@ -2834,6 +2864,147 @@ document.addEventListener('visibilitychange', function () {
   if (!document.hidden && FB && ACC.user && Date.now() - ACC.last > 60000) scheduleSync(500);
 });
 
+
+// ═══════════════════════════════════════════════════════════
+// v5 · FOOD LOGGING FROM CHAT TEXT (AI proposes, you review, one tap saves)
+// ═══════════════════════════════════════════════════════════
+var LOG_FOOD_TOOL = {
+  name: 'log_food',
+  description: 'Propose food and drink entries to add to the user\'s log for today. Call this whenever the user says what they ate or drank. The user reviews and confirms before anything is saved.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        description: 'One entry per distinct food or drink.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Short label including the quantity, e.g. "Omelette (3 eggs)"' },
+            kcal: { type: 'number', description: 'Total calories for the whole quantity eaten' },
+            protein_g: { type: 'number' }, carbs_g: { type: 'number' }, fat_g: { type: 'number' },
+            source: { type: 'string', enum: ['user', 'estimate'], description: '"user" if the user gave these numbers (already multiplied by the quantity), otherwise "estimate"' }
+          },
+          required: ['name', 'kcal', 'protein_g', 'carbs_g', 'fat_g', 'source']
+        }
+      },
+      assumptions: { type: 'string', description: 'One or two short sentences on portion or cooking assumptions' }
+    },
+    required: ['items']
+  }
+};
+
+var _foodCards = {}, _foodSeq = 0;
+
+function nz(v, max) { var n = parseFloat(v); if (!isFinite(n) || n < 0) return 0; return Math.min(n, max); }
+
+// keep only well-formed, sane items from the model's tool input
+function cleanFoodItems(input) {
+  var out = [];
+  var raw = input && Array.isArray(input.items) ? input.items.slice(0, 15) : [];
+  raw.forEach(function (it) {
+    if (!it || typeof it !== 'object') return;
+    var name = String(it.name == null ? '' : it.name).trim().slice(0, 60);
+    if (!name) return;
+    var p = nz(it.protein_g, 500), c = nz(it.carbs_g, 1000), f = nz(it.fat_g, 500), k = nz(it.kcal, 5000);
+    if (!k && (p || c || f)) k = Math.round(p * 4 + c * 4 + f * 9);
+    if (!k) return;
+    out.push({ name: name, kcal: Math.round(k), p: Math.round(p * 10) / 10, c: Math.round(c * 10) / 10, f: Math.round(f * 10) / 10, src: it.source === 'user' ? 'user' : 'estimate' });
+  });
+  return out;
+}
+function foodSummary(items) {
+  return items.map(function (x) { return x.name + ' ' + x.kcal + ' kcal (P' + x.p + ' C' + x.c + ' F' + x.f + ')'; }).join('; ');
+}
+
+function renderFoodCard(items, assumptions) {
+  var id = 'fc' + (++_foodSeq);
+  _foodCards[id] = { done: false };
+  var chat = $('chat'), div = document.createElement('div');
+  div.className = 'msg agent'; div.id = id;
+  var h = '<div class="agent-row"><div class="avatar">⬡</div><div><div class="log-card" style="min-width:270px;max-width:340px">' +
+          '<div class="log-card-title">🍽️ Review before saving</div><div id="' + id + '-rows">';
+  items.forEach(function (it, i) {
+    h += '<div class="fc-item" data-i="' + i + '">' +
+         '<div class="log-row"><input class="log-input fc-n" value="' + esc(it.name) + '" maxlength="60" aria-label="Food name">' +
+         '<button class="ibtn" onclick="foodCardRemove(\'' + id + '\',this)" aria-label="Remove">✕</button></div>' +
+         '<div class="fc-grid">' +
+         '<label>kcal<input class="log-input fc-k" type="number" inputmode="numeric" value="' + it.kcal + '" oninput="foodCardTotal(\'' + id + '\')"></label>' +
+         '<label>P g<input class="log-input fc-p" type="number" inputmode="decimal" value="' + it.p + '" oninput="foodCardTotal(\'' + id + '\')"></label>' +
+         '<label>C g<input class="log-input fc-c" type="number" inputmode="decimal" value="' + it.c + '" oninput="foodCardTotal(\'' + id + '\')"></label>' +
+         '<label>F g<input class="log-input fc-f" type="number" inputmode="decimal" value="' + it.f + '" oninput="foodCardTotal(\'' + id + '\')"></label>' +
+         '</div><div class="fc-src ' + it.src + '">' + (it.src === 'user' ? 'your numbers' : 'estimate — check it') + '</div></div>';
+  });
+  h += '</div><div class="fc-total" id="' + id + '-total"></div>' +
+       (assumptions ? '<div class="note" style="margin:6px 0">' + esc(String(assumptions).slice(0, 300)) + '</div>' : '') +
+       '<div class="log-row" id="' + id + '-btns" style="margin-top:8px"><button class="log-btn" style="flex:1" onclick="foodCardSave(\'' + id + '\')">✓ Save to today</button>' +
+       '<button class="log-btn secondary" onclick="foodCardCancel(\'' + id + '\')">Cancel</button></div></div></div></div>';
+  div.innerHTML = h;
+  chat.appendChild(div);
+  foodCardTotal(id);
+  chat.scrollTop = chat.scrollHeight;
+  return id;
+}
+
+function foodCardRead(id) {
+  var rows = document.querySelectorAll('#' + id + '-rows .fc-item'), out = [];
+  rows.forEach(function (r) {
+    var name = r.querySelector('.fc-n').value.trim().slice(0, 60);
+    var k = nz(r.querySelector('.fc-k').value, 5000);
+    if (!name || !k) return;
+    out.push({ l: name, a: Math.round(k), p: Math.round(nz(r.querySelector('.fc-p').value, 500) * 10) / 10,
+               c: Math.round(nz(r.querySelector('.fc-c').value, 1000) * 10) / 10, f: Math.round(nz(r.querySelector('.fc-f').value, 500) * 10) / 10 });
+  });
+  return out;
+}
+function foodCardTotal(id) {
+  var t = $(id + '-total'); if (!t) return;
+  var it = foodCardRead(id), k = 0, p = 0, c = 0, f = 0;
+  it.forEach(function (x) { k += x.a; p += x.p; c += x.c; f += x.f; });
+  t.innerHTML = '<b>Total ' + k + ' kcal</b> · P ' + r1(p) + ' g · C ' + r1(c) + ' g · F ' + r1(f) + ' g';
+}
+function foodCardRemove(id, btn) {
+  var row = btn.closest('.fc-item'); if (row) row.remove();
+  foodCardTotal(id);
+}
+function foodCardCancel(id) {
+  var st = _foodCards[id]; if (!st || st.done) return;
+  st.done = true;
+  var el = $(id); if (el) el.remove();
+  tst('Not saved');
+}
+function foodCardSave(id) {
+  var st = _foodCards[id]; if (!st || st.done) return;          // never save twice
+  var items = foodCardRead(id);
+  if (!items.length) { tst('Nothing to save — add a name and calories', true); return; }
+  st.done = true;
+  var d = gd(); if (!d.c) d.c = [];
+  var tm = now(), k = 0, p = 0;
+  items.forEach(function (x) {
+    var e = { l: x.l, a: x.a, t: tm };
+    if (x.p) e.p = x.p; if (x.c) e.c = x.c; if (x.f) e.f = x.f;
+    d.c.push(e); k += x.a; p += x.p;
+  });
+  sd(d);
+  var box = $(id + '-btns'); if (box) box.innerHTML = '<div class="note" style="color:var(--green);font-weight:700">✓ Saved ' + items.length + ' item' + (items.length > 1 ? 's' : '') + ' · ' + k + ' kcal</div>';
+  document.querySelectorAll('#' + id + ' input, #' + id + ' .ibtn').forEach(function (e) { e.disabled = true; });
+  tst('🍽️ ' + items.length + ' item' + (items.length > 1 ? 's' : '') + ' logged');
+  var left = Math.round(budgetOf(gd()) - sumCal(gd()));
+  renderMsg('agent', 'Logged **' + k + ' kcal** and **' + r1(p) + ' g protein**. ' + (left >= 0 ? '**' + left + ' kcal** left today.' : 'You are **' + Math.abs(left) + ' kcal** over today\'s budget.'), 'AXON · ' + now());
+}
+
+// called from sendMessage with the model's reply blocks; returns true if a card was shown
+function handleModelBlocks(blocks, metaLabel) {
+  var text = blocks.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('').trim();
+  var uses = blocks.filter(function (b) { return b.type === 'tool_use' && b.name === 'log_food'; });
+  var items = [], assumptions = '';
+  uses.forEach(function (u) { items = items.concat(cleanFoodItems(u.input)); if (u.input && u.input.assumptions && !assumptions) assumptions = u.input.assumptions; });
+  if (!items.length) { addMsg('agent', text || (uses.length ? 'I could not read that meal. Try listing each food with its quantity.' : '(no reply)'), metaLabel); return false; }
+  _history.push({ role: 'agent', content: (text ? text + '\n' : '') + '[Proposed food log, awaiting the user\'s confirmation in the app: ' + foodSummary(items) + ']' });
+  if (text) renderMsg('agent', text, metaLabel);
+  renderFoodCard(items, assumptions);
+  return true;
+}
 
 // ── WELCOME ──
 function welcome() {
