@@ -1,5 +1,5 @@
 // AXON service worker — bump CACHE_VERSION when you change index.html
-const CACHE_VERSION = 'axon-v9';
+const CACHE_VERSION = 'axon-v10';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
