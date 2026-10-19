@@ -729,6 +729,68 @@ body {
 .fc-src.user { color: var(--green); }
 .fc-src.estimate { color: var(--amber); }
 .fc-total { font-size: 12px; padding-top: 8px; border-top: 1px solid var(--border2); margin-top: 4px; }
+
+/* ═══════════ SOFT REDESIGN (v11) ═══════════ */
+:root {
+  --bgfx: radial-gradient(60% 38% at 12% 8%, rgba(99,179,237,.16), transparent 70%),
+          radial-gradient(55% 40% at 95% 30%, rgba(104,211,145,.07), transparent 70%),
+          radial-gradient(70% 45% at 40% 100%, rgba(183,148,244,.08), transparent 70%);
+  --shadow: 0 6px 24px rgba(0,0,0,.28);
+  --soft: rgba(99,179,237,.07);
+}
+[data-theme="light"] {
+  --bg:#f6f8fd; --card:#edf1fa; --panel:#ffffff;
+  --bgfx: radial-gradient(60% 38% at 12% 8%, rgba(43,123,196,.16), transparent 70%),
+          radial-gradient(55% 40% at 95% 30%, rgba(42,157,92,.10), transparent 70%),
+          radial-gradient(70% 45% at 40% 100%, rgba(122,79,208,.10), transparent 70%);
+  --shadow: 0 6px 22px rgba(30,70,130,.12);
+  --soft: rgba(43,123,196,.07);
+}
+body, .page { background: var(--bgfx), var(--bg); background-attachment: fixed; }
+
+/* header + stats: float on the glow, no hard bars */
+.hdr { background: transparent; border-bottom: none; padding-bottom: 6px; }
+.agent-badge { border-radius: 99px; }
+.stats-bar { background: transparent; border-bottom: none; gap: 8px; padding: 6px 12px 10px; }
+.stat { flex: 0 0 auto; min-width: 72px; border: 1px solid var(--border2); border-radius: 18px; background: var(--panel); box-shadow: var(--shadow); padding: 9px 12px; }
+.stat:last-child { border: 1px solid var(--border2); }
+
+/* chat: AI speaks as plain text, user answers as small pills */
+.chat-wrap { padding: 8px 18px 14px; gap: 18px; }
+.msg { max-width: 94%; }
+.msg.agent { max-width: 100%; }
+.agent-row > .avatar { display: none; }
+.msg.agent .bubble { background: transparent; border: none; padding: 2px 0; font-size: 16px; line-height: 1.7; border-radius: 0; }
+.msg.user .bubble { border-radius: 20px; padding: 9px 16px; font-size: 14.5px; border-bottom-right-radius: 20px; box-shadow: var(--shadow); }
+.msg-meta { font-size: 9px; padding: 0; opacity: .8; }
+.typing-bubble { background: var(--panel); border: none; border-radius: 20px; box-shadow: var(--shadow); padding: 12px 18px; }
+.chip { border-radius: 99px; background: var(--panel); border: 1px solid var(--border2); box-shadow: var(--shadow); padding: 8px 15px; font-size: 13px; }
+.chips { flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; }
+
+/* cards & sections */
+.log-card, .sec { border-radius: 22px; border: 1px solid var(--border2); box-shadow: var(--shadow); }
+[data-theme="light"] .log-btn.secondary { color: var(--tx); }
+.qlog-bar { padding: 4px 4px 12px; margin-bottom: 0; }
+
+/* bottom: quick actions + floating rounded input */
+.input-area { background: transparent; border-top: none; padding: 6px 14px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.qlog-pill { border-radius: 99px; background: var(--panel); border: 1px solid var(--border2); box-shadow: var(--shadow); padding: 8px 14px; font-size: 12px; }
+.main-input { border-radius: 26px; padding: 13px 18px; background: var(--panel); border: 1px solid var(--border2); box-shadow: var(--shadow); min-height: 48px; }
+.send-btn { width: 48px; height: 48px; border-radius: 50%; box-shadow: var(--shadow); }
+
+/* pages, modals, buttons */
+.page-hdr { background: transparent; border-bottom: none; }
+.page-back { border-radius: 50%; background: var(--panel); box-shadow: var(--shadow); border: 1px solid var(--border2); }
+.modal { border-radius: 26px; }
+.btn, .log-btn, .modal-btn { border-radius: 99px; }
+.inp, .log-input { border-radius: 14px; }
+
+/* activity chooser */
+.act-choice { display:flex; align-items:center; gap:12px; width:100%; text-align:left; padding:14px; margin-top:8px; border-radius:18px; border:1px solid var(--border2); background:var(--panel); color:var(--tx); font-family:inherit; cursor:pointer; box-shadow:var(--shadow); }
+.act-choice:active { background: var(--soft); }
+.act-choice .ai { font-size:24px; }
+.act-choice b { display:block; font-size:14px; }
+.act-choice span.s { display:block; font-size:11.5px; color:var(--mu2); margin-top:2px; font-weight:400; }
 </style>
 </head>
 <body>
@@ -790,8 +852,7 @@ body {
     <button class="qlog-pill" onclick="showLogCard('weight')"><span class="pill-icon">⚖️</span>Weight</button>
     <button class="qlog-pill" onclick="showLogCard('food')"><span class="pill-icon">🍽️</span>Food</button>
     <button class="qlog-pill" onclick="showLogCard('water')"><span class="pill-icon">💧</span>Water</button>
-    <button class="qlog-pill" onclick="showLogCard('exercise')"><span class="pill-icon">🏋️</span>Exercise</button>
-    <button class="qlog-pill" onclick="openPage('workout')"><span class="pill-icon">💪</span>Workout</button>
+    <button class="qlog-pill" onclick="showLogCard('activity')"><span class="pill-icon">🏃</span>Activity</button>
     <button class="qlog-pill" onclick="openPage('log')"><span class="pill-icon">📝</span>Today</button>
     <button class="qlog-pill" onclick="openPage('progress')"><span class="pill-icon">📈</span>Progress</button>
     <button class="qlog-pill" onclick="sendQuick('Give me a meal plan for today based on my remaining calories.')"><span class="pill-icon">📋</span>Meal plan</button>
@@ -1151,6 +1212,12 @@ function showLogCard(type) {
       '<div class="prog-bar-bg"><div class="prog-bar-fill" id="lc-wl-prog" style="width:' + Math.min((gd().w||0)/WATER_GOAL*100,100) + '%;background:var(--accent)"></div></div>' +
       '</div></div>';
 
+  } else if (type === 'activity') {
+    html += '<div class="log-card" style="min-width:260px;max-width:340px">' +
+      '<div class="log-card-title">🏃 Activity</div>' +
+      '<button class="act-choice" onclick="removeLogCards();showLogCard(\'exercise\')"><span class="ai">⏱️</span><span><b>Quick activity</b><span class="s">Walk, run, sport — minutes and calories</span></span></button>' +
+      (typeof openPage === 'function' && typeof woFinish === 'function' ? '<button class="act-choice" onclick="removeLogCards();openPage(\'workout\')"><span class="ai">💪</span><span><b>Gym workout</b><span class="s">Templates, sets and reps, rest timer, history</span></span></button>' : '') +
+      '</div>';
   } else if (type === 'exercise') {
     html += '<div class="log-card">' +
       '<div class="log-card-title">🏃 Log Activity</div>' +
@@ -1465,7 +1532,7 @@ function applyScan() {
 }
 
 function removeLogCards() {
-  ['weight','food','water','exercise'].forEach(function(t) {
+  ['weight','food','water','exercise','activity'].forEach(function(t) {
     var el = document.getElementById('log-card-' + t);
     if (el) el.remove();
   });
@@ -2038,7 +2105,7 @@ function localReply(msg) {
   if (/water|drink|hydrat/.test(m)) return 'Water today: **' + (d.w || 0) + ' L** of **' + WATER_GOAL + ' L**' + ((d.w || 0) >= WATER_GOAL ? ' ✅' : ' — **' + r1(WATER_GOAL - (d.w || 0)) + ' L** to go.');
   if (/exercis|burn|workout/.test(m)) {
     var wos = (d.wo || []).length, ex = (d.ex || []);
-    if (!ex.length && !wos) return 'No exercise logged today yet. Tap 💪 Workout or 🏃 Activity.';
+    if (!ex.length && !wos) return 'No exercise logged today yet. Tap 🏃 Activity.';
     return 'Today: **' + wos + '** workout(s), exercise burned **' + Math.round(sumEx(d)) + ' kcal** (estimate)' + (ex.length ? ': ' + ex.map(function (e) { return e.n + (e.mins ? ' ' + e.mins + 'min' : ''); }).join(', ') : '') + '.';
   }
   if (/calor|kcal|eat/.test(m)) {
